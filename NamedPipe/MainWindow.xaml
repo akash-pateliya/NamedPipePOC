@@ -1,7 +1,7 @@
-<Window x:Class="NamedPipe.MainWindow"
+﻿<Window x:Class="NamedPipe.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="MainWindow" Height="150" Width="300" Loaded="Window_Loaded">
+        Title="MainWindow" Height="150" Width="300" >
     <Grid>
         <TextBlock Text="Waiting for command line arguments..." Margin="10"/>
     </Grid>
