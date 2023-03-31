@@ -1,67 +1,99 @@
 using System;
+using System.Collections.Generic;
+using System.Configuration;
+using System.Data;
+using System.IO;
+using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
+using System.IO.Pipes;
 
-namespace NamedPipe
+namespace NamedPipeWPF
 {
     public partial class App : Application
     {
-        private Mutex mutex;
-
         protected override void OnStartup(StartupEventArgs e)
         {
-            const string appName = "NamedPipeDemo";
-            bool createdNew;
-
-            mutex = new Mutex(true, appName, out createdNew);
-
-            if (!createdNew)
-            {
-                // An instance of the application is already running, so send the command line arguments to it
-                var mainWindowHandle = NativeMethods.FindWindow(null, appName);
-                NativeMethods.ShowWindow(mainWindowHandle, NativeMethods.SW_RESTORE);
-                NativeMethods.SetForegroundWindow(mainWindowHandle);
-                SendCommandLineArgumentsToExistingInstance(e.Args);
-                Shutdown();
-                return;
-            }
-
             base.OnStartup(e);
-        }
 
-        private void SendCommandLineArgumentsToExistingInstance(string[] args)
-        {
             try
             {
-                // Send the command line arguments to the existing instance of the application
-                using (var client = new NamedPipeClientStream(".", "NamedPipeDemo"))
+                bool isNotFirstInstance = !Mutex.TryOpenExisting("NamedPipeMutex", out Mutex mutex);
+                if (isNotFirstInstance)
                 {
-                    client.Connect(1000);
-                    var writer = new StreamWriter(client);
-                    writer.AutoFlush = true;
-                    writer.WriteLine(string.Join(" ", args));
+                    using (var client = new NamedPipeClientStream("NamedPipe"))
+                    {
+                        try
+                        {
+                            client.Connect();
+                            using (var writer = new StreamWriter(client))
+                            {
+                                foreach (var arg in e.Args)
+                                {
+                                    writer.WriteLine(arg);
+                                }
+                            }
+                        }
+                        catch (IOException ex)
+                        {
+                            MessageBox.Show($"Error connecting to the named pipe client: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                            Shutdown();
+                        }
+                    }
+                    Shutdown();
+                }
+                else
+                {
+                    mutex = new Mutex(true, "NamedPipeMutex");
+                    var pipeServer = new NamedPipeServerStream("NamedPipe", PipeDirection.InOut, 1, PipeTransmissionMode.Message, PipeOptions.Asynchronous);
+                    var pipeThread = new Thread(() =>
+                    {
+                        while (true)
+                        {
+                            try
+                            {
+                                pipeServer.WaitForConnection();
+                                var reader = new StreamReader(pipeServer);
+                                var args = new List<string>();
+                                while (!reader.EndOfStream)
+                                {
+                                    args.Add(reader.ReadLine());
+                                }
+                                pipeServer.Disconnect();
+                                pipeServer.BeginWaitForConnection(null, null);
+                                ShowMessageBox(args);
+                            }
+                            catch (IOException ex)
+                            {
+                                MessageBox.Show($"Error handling the named pipe connection: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                            }
+                        }
+                    });
+                    pipeThread.IsBackground = true;
+                    pipeThread.Start();
+
+                    MainWindow mainWindow = new MainWindow();
+                    mainWindow.Show();
                 }
             }
             catch (Exception ex)
             {
-                // Show a message box indicating that the named pipe is closed or disconnected
-                MessageBox.Show($"Failed to send command line arguments to existing instance:\n\n{ex.Message}",
-                                "Named Pipe Demo", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"An error occurred: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                Shutdown();
             }
         }
-    }
 
-    internal static class NativeMethods
-    {
-        [DllImport("user32.dll")]
-        internal static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-
-        [DllImport("user32.dll")]
-        internal static extern bool SetForegroundWindow(IntPtr hWnd);
-
-        [DllImport("user32.dll", SetLastError = true)]
-        internal static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-
-        internal const int SW_RESTORE = 9;
+        private void ShowMessageBox(string[] args)
+        {
+            if (args.Length == 2)
+            {
+                MessageBox.Show($"Arg 1: {args[0]}, Arg 2: {args[1]}");
+            }
+            else
+            {
+                MessageBox.Show("Invalid number of arguments.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
     }
 }
