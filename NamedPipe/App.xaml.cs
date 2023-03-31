@@ -1,98 +1,67 @@
 using System;
-using System.IO;
-using System.IO.Pipes;
-using System.Linq;
-using System.Threading.Tasks;
+using System.Threading;
 using System.Windows;
 
 namespace NamedPipe
 {
     public partial class App : Application
     {
-        private const string PipeName = "MyAppPipe";
-        private NamedPipeServerStream pipeServer;
+        private Mutex mutex;
 
         protected override void OnStartup(StartupEventArgs e)
         {
+            const string appName = "NamedPipeDemo";
             bool createdNew;
-            pipeServer = new NamedPipeServerStream(PipeName, PipeDirection.InOut, 1,
-                PipeTransmissionMode.Message, PipeOptions.Asynchronous);
-            var pipeConnected = false;
-            try
-            {
-                pipeServer.BeginWaitForConnection(ar =>
-                {
-                    pipeServer.EndWaitForConnection(ar);
-                    pipeConnected = true;
-                }, null);
-            }
-            catch (Exception)
-            {
-                pipeServer.Dispose();
-                pipeServer = null;
-            }
 
-            if (!pipeConnected)
+            mutex = new Mutex(true, appName, out createdNew);
+
+            if (!createdNew)
             {
-                // New instance, create pipe and start server
-                base.OnStartup(e);
+                // An instance of the application is already running, so send the command line arguments to it
+                var mainWindowHandle = NativeMethods.FindWindow(null, appName);
+                NativeMethods.ShowWindow(mainWindowHandle, NativeMethods.SW_RESTORE);
+                NativeMethods.SetForegroundWindow(mainWindowHandle);
+                SendCommandLineArgumentsToExistingInstance(e.Args);
+                Shutdown();
                 return;
             }
 
-            // Existing instance, read command line arguments from pipe
-            using (var reader = new StreamReader(pipeServer))
+            base.OnStartup(e);
+        }
+
+        private void SendCommandLineArgumentsToExistingInstance(string[] args)
+        {
+            try
             {
-                var args = reader.ReadToEnd();
-                var argArray = args.Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries);
-                if (argArray.Length > 0)
+                // Send the command line arguments to the existing instance of the application
+                using (var client = new NamedPipeClientStream(".", "NamedPipeDemo"))
                 {
-                    string arg1 = argArray[0];
-                    string arg2 = argArray.Length > 1 ? argArray[1] : null;
-                    try
-                    {
-                        var window = Current.Windows.OfType<MainWindow>().FirstOrDefault();
-                        window?.Dispatcher.Invoke(() =>
-                        {
-                            window.ShowMessage($"arg1: {arg1}, arg2: {arg2}");
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show($"Error: {ex.Message}");
-                    }
+                    client.Connect(1000);
+                    var writer = new StreamWriter(client);
+                    writer.AutoFlush = true;
+                    writer.WriteLine(string.Join(" ", args));
                 }
             }
-
-            // Exit new instance
-            Current.Shutdown();
-        }
-
-        protected override void OnExit(ExitEventArgs e)
-        {
-            // Clean up named pipe server
-            pipeServer?.Dispose();
-            base.OnExit(e);
-        }
-
-        internal static void SendCommandLineArgs(string[] args)
-        {
-            using (var pipeClient = new NamedPipeClientStream(".", PipeName, PipeDirection.Out))
+            catch (Exception ex)
             {
-                try
-                {
-                    pipeClient.Connect(5000);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Error: {ex.Message}");
-                    return;
-                }
-
-                using (var writer = new StreamWriter(pipeClient))
-                {
-                    writer.Write(string.Join("|", args));
-                }
+                // Show a message box indicating that the named pipe is closed or disconnected
+                MessageBox.Show($"Failed to send command line arguments to existing instance:\n\n{ex.Message}",
+                                "Named Pipe Demo", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
+    }
+
+    internal static class NativeMethods
+    {
+        [DllImport("user32.dll")]
+        internal static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("user32.dll")]
+        internal static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+
+        internal const int SW_RESTORE = 9;
     }
 }
