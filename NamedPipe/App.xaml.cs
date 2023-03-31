@@ -16,7 +16,11 @@ namespace NamedPipeWPF
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
-
+            AppDomain.CurrentDomain.UnhandledException += (s, ex) =>
+            {
+                MessageBox.Show($"An unhandled exception occurred: {ex.ExceptionObject}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                Shutdown();
+            };
             try
             {
                 bool isNotFirstInstance = !Mutex.TryOpenExisting("NamedPipeMutex", out Mutex mutex);
